@@ -1,0 +1,5 @@
+.env
+myenv
+req.txt
+testresponse.py
+__pycache__
