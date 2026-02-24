@@ -1,7 +1,7 @@
 from jose import jwt,JWTError
 from datetime import datetime,timedelta
 from schemas import settings
-from fastapi import HTTPException,Request,Header
+from fastapi import HTTPException,Request,Header,Cookie
 
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
@@ -17,6 +17,10 @@ def get_current_user_from_cookie(request: Request):
     if not token:
         raise HTTPException(status_code=401, detail="Missing token")
     payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+    return payload.get("sub")
+
+def get_current_user_ws(access_token:str=Cookie(...)):
+    payload = jwt.decode(access_token, settings.secret_key, algorithms=[settings.algorithm])
     return payload.get("sub")
 
 def get_current_user(authorization: str = Header(...)):

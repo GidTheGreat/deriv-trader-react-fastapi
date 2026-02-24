@@ -9,15 +9,14 @@ from bot.req_proc_symbols import req_active_symbols,active_symbols
 from bot.auth_balance import authorize,subscribe_balance,account_balance
 from bot.handle_ticks import sub_ticks,handle_ticks
 import bot.shared_vars
-from bot.status2 import background_live_updates,status_messages
 from bot.look_for_trade import parse_proposal_data
 
 
-async def connect_to_ws():
+async def connect_to_ws(status_messages, access_token):
     """Establish connection to deriv 
     websocket endpoint"""
     app_id = 82750 
-    token = "xQHRRDpUWkGNGNW" 
+    token = access_token
     uri = f"wss://ws.derivws.com/websockets/v3?app_id={app_id}"
     
     status_messages["connection"]["connection_status"] =("attempting to establish connection")
@@ -73,12 +72,10 @@ async def connect_to_ws():
                     
     
 
-async def main():
-    task1 = asyncio.create_task(connect_to_ws())
-    task2 = asyncio.create_task(background_live_updates())
-    await asyncio.gather(task1, task2)
+async def main(status_messages, token):
+    print("starting")
+    task1 = asyncio.create_task(connect_to_ws(status_messages, token))
+    await asyncio.gather(task1)
     
     
 
-if __name__ == '__main__':
-    asyncio.run(main())

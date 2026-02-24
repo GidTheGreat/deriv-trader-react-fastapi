@@ -1,21 +1,23 @@
-from fastapi import FastAPI,Request,Response,Body,Depends, HTTPException,Form
+from fastapi import FastAPI,Request,Response,Body,Depends, HTTPException,WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from websockets.asyncio.client import connect
 import json
 from schemas import UserFeedback
-from database import database_conn
-from jwt import create_access_token,get_current_user_from_cookie
+from database import database_conn,handle_db_update
+from jwt import create_access_token,get_current_user_from_cookie,get_current_user_ws
 from schemas import settings
 from fastapi.responses import JSONResponse
 import global_vars
 from contextlib import asynccontextmanager
-from database import database_conn
 from encrypt_decrypt import encrypt_token,decrypt_token
 import psycopg2
 import asyncio
 from runbot import spawn_bot
 from fastapi.middleware.cors import CORSMiddleware
-
+from multiprocessing import Manager
+from multiprocessing.managers import DictProxy
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,6 +31,7 @@ async def lifespan(app: FastAPI):
     print("Shutting down")
 
 app = FastAPI(lifespan=lifespan)
+manager=Manager()
 app.add_middleware(CORSMiddleware,
                    allow_origins=["*"],
                    allow_methods=["*"])
@@ -41,36 +44,12 @@ def get_token(token_dict=Body(...)):
     else:
         return json.loads(token_dict)["token"]
 
-async def handle_db_update(email,name,ecrypted_token,plain_token):
-    global_vars.db_cursor.execute("SELECT * FROM deriv_users")
-    data=global_vars.db_cursor.fetchone()
-    if not data:
-        global_vars.db_cursor.execute("INSERT INTO deriv_users (name,email,token) VALUES(%s,%s,%s)",
-                              (name,email,ecrypted_token))
-    else:
-        global_vars.db_cursor.execute("SELECT token FROM deriv_users WHERE email=%s",(email,))
-        token_from_db = global_vars.db_cursor.fetchone()
-        decrypted_token = decrypt_token(token_from_db['token'])
-        print("type of token received",plain_token,
-             "db:" ,decrypted_token)
-        if token_from_db and  plain_token!= decrypted_token:
-            print('updating token')
-            global_vars.db_cursor.execute(
-                "UPDATE deriv_users SET token=%s WHERE email=%s",(ecrypted_token,email)
-            )
-        elif not token_from_db:
-            global_vars.db_cursor.execute("INSERT INTO deriv_users (name,email,token) VALUES(%s,%s,%s)",
-                              (name,email,ecrypted_token))
-            
-    global_vars.db_connection.commit()
 
-    
 
-@app.post("/login_token")
+@app.post("/api/login_token")
 async def validate_token(req: Request,token: str = Depends(get_token)):
     deriv_url = "wss://ws.derivws.com/websockets/v3?app_id=1089"
     print(token)
-    """
     try:
         async with connect(deriv_url) as ws:
             print("connected")
@@ -105,28 +84,44 @@ async def validate_token(req: Request,token: str = Depends(get_token)):
     except Exception as e:
         print(e)
         return {"error": str(e)}
-    """
+   
+    
 
-@app.post("/start_bot")
+@app.post("/api/start_bot")
 async def start_bot(current_user:str = Depends(get_current_user_from_cookie)):
     if current_user in global_vars.active_bots:
         return {"bot status":f"bot already running for {current_user}"}
     elif current_user not in global_vars.active_bots:
-        spawned_bot_process = spawn_bot()
-        global_vars.active_bots[current_user]=spawned_bot_process
+        global_vars.db_cursor.execute("SELECT token FROM deriv_users WHERE email=%s",(current_user,))
+        token_from_db = global_vars.db_cursor.fetchone()
+        decrypted_token = decrypt_token(token_from_db['token'])
+        status_messages=manager.dict()
+        status_messages[current_user]=manager.dict()
+        if "ticks" not in status_messages[current_user]:
+            status_messages[current_user]["ticks"]= manager.dict()
+            status_messages[current_user]["connection"]= manager.dict()
+            status_messages[current_user]["trades"]= manager.dict()
+            status_messages[current_user]["profit_loss"]= manager.dict()
+            status_messages[current_user]["account balance"]= manager.dict()
+            status_messages[current_user]["proposal"]= manager.dict()
+        
+        spawned_bot_process = spawn_bot(decrypted_token, status_messages[current_user])
+        global_vars.active_bots[current_user]={"bot": spawned_bot_process,
+                                               "bot_data": status_messages}
+        
         return {"bot status":f"bot started for {current_user}"}
     
-@app.post("/stop_bot")
+@app.post("/api/stop_bot")
 async def stop_bot(current_user:str = Depends(get_current_user_from_cookie)):
     if current_user not in global_vars.active_bots:
         return {"bot status":f"no bot running for {current_user}"}
     elif current_user in global_vars.active_bots:
-        global_vars.active_bots[current_user].terminate()
-        global_vars.active_bots[current_user].join()
+        global_vars.active_bots[current_user]["bot"].terminate()
+        global_vars.active_bots[current_user]["bot"].join()
         del global_vars.active_bots[current_user]
         return {"bot status":f"bot stopped for {current_user}"}
 
-@app.post("/logout")
+@app.post("/api/logout")
 async def logout():
     response = JSONResponse({"message": "Logged out"})
     response.delete_cookie(
@@ -134,5 +129,35 @@ async def logout():
         path="/"
     )
     return response
+
+
+@app.websocket("/ws")
+async def websocket_endpont(websocket: WebSocket,
+                            current_user: str = Depends(get_current_user_ws)):
     
+    await websocket.accept()
     
+    while True:
+        try:
+            if current_user in global_vars.active_bots:
+                st = global_vars.active_bots[current_user]["bot_data"]
+                st= st[current_user]
+                parsed = parse(st)
+                await websocket.send_json(parsed)  
+                await asyncio.sleep(2) 
+            else:
+                await websocket.send_json({"bot status":"no active bot running"})  
+                await asyncio.sleep(60)
+        except WebSocketDisconnect:
+            break
+
+def parse(st):
+    parsed_dict = {}
+    for key in st.keys():
+        st_2 =dict(st[key])
+        parsed_dict[key]=st_2
+
+    return parsed_dict
+        
+            
+app.mount("/", StaticFiles(directory="dist", html=True), name="react_app")
