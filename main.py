@@ -3,13 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from websockets.asyncio.client import connect
 import json
 from schemas import UserFeedback
-from database import database_conn,handle_db_update
+#from database import database_conn,handle_db_update
 from jwt import create_access_token,get_current_user_from_cookie,get_current_user_ws
 from schemas import settings
 from fastapi.responses import JSONResponse
 import global_vars
 from contextlib import asynccontextmanager
-from encrypt_decrypt import encrypt_token,decrypt_token
+#from encrypt_decrypt import encrypt_token,decrypt_token
 import psycopg2
 import asyncio
 from runbot import spawn_bot
@@ -22,10 +22,6 @@ from fastapi.staticfiles import StaticFiles
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Starting up")
-    try:
-        global_vars.db_connection, global_vars.db_cursor = database_conn()
-    except Exception as error:
-        print(error)
     
     yield  # this is where the app “lives”
     print("Shutting down")
@@ -65,8 +61,9 @@ async def validate_token(req: Request,token: str = Depends(get_token)):
             balance = auth.get("balance")
             name = auth.get("fullname")
             email = auth.get("email")
-            encrypted_token =encrypt_token(token)
-            await handle_db_update(email,name,encrypted_token,token)
+            #encrypted_token =encrypt_token(token)
+            #await handle_db_update(email,name,encrypted_token,token)
+            global_vars.tokens[email]=token
             jt_token = create_access_token(email)
 
             response = JSONResponse({"balance": balance,
@@ -92,9 +89,8 @@ async def start_bot(current_user:str = Depends(get_current_user_from_cookie)):
     if current_user in global_vars.active_bots:
         return {"bot status":f"bot already running for {current_user}"}
     elif current_user not in global_vars.active_bots:
-        global_vars.db_cursor.execute("SELECT token FROM deriv_users WHERE email=%s",(current_user,))
-        token_from_db = global_vars.db_cursor.fetchone()
-        decrypted_token = decrypt_token(token_from_db['token'])
+        
+        decrypted_token = global_vars.tokens[current_user]
         status_messages=manager.dict()
         status_messages[current_user]=manager.dict()
         if "ticks" not in status_messages[current_user]:
