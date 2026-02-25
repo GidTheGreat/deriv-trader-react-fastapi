@@ -3,13 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from websockets.asyncio.client import connect
 import json
 from schemas import UserFeedback
-#from database import database_conn,handle_db_update
 from jwt import create_access_token,get_current_user_from_cookie,get_current_user_ws
-from schemas import settings
+
 from fastapi.responses import JSONResponse
 import global_vars
 from contextlib import asynccontextmanager
-#from encrypt_decrypt import encrypt_token,decrypt_token
 import psycopg2
 import asyncio
 from runbot import spawn_bot
@@ -61,8 +59,7 @@ async def validate_token(req: Request,token: str = Depends(get_token)):
             balance = auth.get("balance")
             name = auth.get("fullname")
             email = auth.get("email")
-            #encrypted_token =encrypt_token(token)
-            #await handle_db_update(email,name,encrypted_token,token)
+            
             global_vars.tokens[email]=token
             jt_token = create_access_token(email)
 
