@@ -8,7 +8,6 @@ from jwt import create_access_token,get_current_user_from_cookie,get_current_use
 from fastapi.responses import JSONResponse
 import global_vars
 from contextlib import asynccontextmanager
-import psycopg2
 import asyncio
 from runbot import spawn_bot
 from fastapi.middleware.cors import CORSMiddleware
